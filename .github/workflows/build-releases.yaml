@@ -1,0 +1,129 @@
+# Builds the following releases:
+# - Binary releases
+# - Debian releases (.deb)
+# - MSI installer
+
+name: "Build Releases"
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+env:
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build-binaries:
+    name: "Build binaries"
+    runs-on: ${{ matrix.info.os }}
+    env:
+      RUST_BACKTRACE: 1
+      BTM_GENERATE: true
+    strategy:
+      fail-fast: false
+      matrix:
+        info:
+          # Linux (x64)
+          - {
+            os: "ubuntu-18.04",
+            target: "x86_64-unknown-linux-gnu",
+          }
+
+          # macOS (x64)
+          - {
+            os: "macOS-latest",
+            target: "x86_64-apple-darwin",
+          }
+
+          # Windows (x64, x86)
+          - {
+            os: "windows-2019",
+            target: "x86_64-pc-windows-msvc",
+          }
+          - {
+            os: "windows-2019",
+            target: "i686-pc-windows-msvc",
+            cross: false
+          }
+          - {
+            os: "windows-2019",
+            target: "x86_64-pc-windows-gnu",
+          }
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+
+      - name: Set up Rust toolchain
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+        with:
+          profile: minimal
+          toolchain: stable
+          target: ${{ matrix.info.target }}
+
+      - name: Enable Rust cache
+        uses: Swatinem/rust-cache@359a70e43a0bb8a13953b04a90f76428b4959bb6
+        with:
+          key: ${{ matrix.info.target }}
+
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --verbose --locked --target=${{ matrix.info.target }}
+
+      - name: Generate completions
+        shell: bash
+        run: |
+          mkdir completion
+          ./target/${{ matrix.info.target }}/release/fido completions --generate bash > completion/fido.bash
+          ./target/${{ matrix.info.target }}/release/fido completions --generate zsh > completion/_fido
+          ./target/${{ matrix.info.target }}/release/fido completions --generate fish > completion/fido.fish
+          ./target/${{ matrix.info.target }}/release/fido completions --generate powershell > completion/_fido.ps1
+
+      - name: Bundle release and completion (Windows)
+        if: matrix.info.os == 'windows-2019'
+        shell: bash
+        run: |
+          cp target/${{ matrix.info.target }}/release/fido.exe fido.exe
+          7z a fido_${{ matrix.info.target }}.zip "fido.exe"
+          7z a fido_${{ matrix.info.target }}.zip "completion"
+          echo "ASSET=fido_${{ matrix.info.target }}.zip" >> $GITHUB_ENV
+
+      - name: Bundle release and completion (Linux and macOS)
+        if: matrix.info.os != 'windows-2019'
+        shell: bash
+        run: |
+          cp target/${{ matrix.info.target }}/release/fido ./fido
+          tar -czvf fido_${{ matrix.info.target }}${{ matrix.info.suffix }}.tar.gz fido completion
+          echo "ASSET=fido_${{ matrix.info.target }}${{ matrix.info.suffix }}.tar.gz" >> $GITHUB_ENV
+
+      - name: Create release directory for artifact, move file
+        shell: bash
+        run: |
+          mkdir release
+          mv ${{ env.ASSET }} release/
+
+      - name: Compress completion files (Linux x86-64 GNU)
+        if: matrix.info.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          tar -C ./completion -czvf completion.tar.gz .
+          mv completion.tar.gz release/
+
+      #      - name: Compress manpage files (Linux x86-64 GNU)
+      #        if: matrix.info.target == 'x86_64-unknown-linux-gnu'
+      #        shell: bash
+      #        run: |
+      #          gzip ./manpage/fido.1
+      #          tar -C ./manpage -czvf manpage.tar.gz .
+      #          mv manpage.tar.gz release/
+
+      - name: Save release as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          retention-days: 3
+          name: release
+          path: release
