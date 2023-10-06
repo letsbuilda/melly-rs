@@ -64,7 +64,7 @@ jobs:
           target: ${{ matrix.info.target }}
 
       - name: Enable Rust cache
-        uses: Swatinem/rust-cache@359a70e43a0bb8a13953b04a90f76428b4959bb6
+        uses: Swatinem/rust-cache@a95ba195448af2da9b00fb742d14ffaaf3c21f43
         with:
           key: ${{ matrix.info.target }}
 
